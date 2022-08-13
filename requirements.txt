@@ -1,6 +1,6 @@
 ipython==8.4.0
 numpy==1.18.4
-opencv_python==4.6.0.66
+opencv-python==4.6.0.66
 Pillow==9.2.0
 requests==2.28.0
 scikit_image==0.17.2
