@@ -7,6 +7,31 @@ import urllib.request
 import requests # For extracting images from urls
 from io import BytesIO
 
+import os
+import requests
+
+
+def download(url: str, dest_folder: str):
+    if not os.path.exists(dest_folder):
+        os.makedirs(dest_folder)  # create folder if it does not exist
+
+    filename = url.split('/')[-1].replace(" ", "_")  # be careful with file names
+    file_path = os.path.join(dest_folder, filename)
+
+    r = requests.get(url, stream=True)
+    if r.ok:
+        print("saving to", os.path.abspath(file_path))
+        with open(file_path, 'wb') as f:
+            for chunk in r.iter_content(chunk_size=1024 * 8):
+                if chunk:
+                    f.write(chunk)
+                    f.flush()
+                    os.fsync(f.fileno())
+    else:  # HTTP status code 4XX/5XX
+        print("Download failed: status code {}\n{}".format(r.status_code, r.text))
+
+download("https://github.com/Tabaxi3000/image-colorizer/releases/download/v1.0.0/colorization_release_v2.caffemodel", dest_folder="model")
+
 def load_network():
     prototxt = r"model/colorization_deploy_v2.prototxt"
     model = r"model/colorization_release_v2.caffemodel"
