@@ -6,83 +6,18 @@ import numpy as np
 import urllib.request
 import requests # For extracting images from urls
 from io import BytesIO
+from PIL import Image
 
 import os
 import requests
 
+from model.util import *
+from model.eccv16 import *
+from model.siggraph17 import *
 
-def download(url: str, dest_folder: str):
-    if not os.path.exists(dest_folder):
-        os.makedirs(dest_folder)  # create folder if it does not exist
-
-    filename = url.split('/')[-1].replace(" ", "_")  # be careful with file names
-    file_path = os.path.join(dest_folder, filename)
-
-    r = requests.get(url, stream=True)
-    if r.ok:
-        print("saving to", os.path.abspath(file_path))
-        with open(file_path, 'wb') as f:
-            for chunk in r.iter_content(chunk_size=1024 * 8):
-                if chunk:
-                    f.write(chunk)
-                    f.flush()
-                    os.fsync(f.fileno())
-    else:  # HTTP status code 4XX/5XX
-        print("Download failed: status code {}\n{}".format(r.status_code, r.text))
-
-download("https://github.com/Tabaxi3000/image-colorizer/releases/download/v1.0.0/colorization_release_v2.caffemodel", dest_folder="model")
-
-def load_network():
-    prototxt = r"model/colorization_deploy_v2.prototxt"
-    model = r"model/colorization_release_v2.caffemodel"
-    points = r"model/pts_in_hull.npy"
-    points = os.path.join(os.path.dirname(__file__), points)
-    prototxt = os.path.join(os.path.dirname(__file__), prototxt)
-    model = os.path.join(os.path.dirname(__file__), model)
-    net = cv2.dnn.readNetFromCaffe(prototxt, model)  # load model from disk
-    pts = np.load(points)
-
-    # add the cluster centers as 1x1 convolutions to the model
-    class8 = net.getLayerId("class8_ab")
-    conv8 = net.getLayerId("conv8_313_rh")
-    pts = pts.transpose().reshape(2, 313, 1, 1)
-    net.getLayer(class8).blobs = [pts.astype("float32")]
-    net.getLayer(conv8).blobs = [np.full([1, 313], 2.606, dtype="float32")]
-    return net
-
-def colorize(file_name, net):
-    image = cv2.imread(file_name)
-    scaled = image.astype("float32") / 255.0
-    lab = cv2.cvtColor(scaled, cv2.COLOR_BGR2LAB)
-
-    # resize the Lab image to 224x224 (the dimensions the colorization network accepts),
-    # split channels, extract the 'L' channel, and then perform mean centering
-    resized = cv2.resize(lab, (224, 224))
-    L = cv2.split(resized)[0]
-    L -= 50
-
-    # pass the L channel through the network which will *predict* the 'a' and 'b' channel values
-    net.setInput(cv2.dnn.blobFromImage(L))
-    ab = net.forward()[0, :, :, :].transpose((1, 2, 0))
-
-    # resize the predicted 'ab' volume to the same dimensions as our input image
-    ab = cv2.resize(ab, (image.shape[1], image.shape[0]))
-
-    # grab the 'L' channel from the *original* input image
-    # (not the resized one) and concatenate the original 'L' channel with the predicted 'ab' channels
-    L = cv2.split(lab)[0]
-    colorized = np.concatenate((L[:, :, np.newaxis], ab), axis=2)
-
-    # convert the output image from the Lab color space to RGB,
-    # then clip any values that fall outside the range [0, 1]
-    colorized = cv2.cvtColor(colorized, cv2.COLOR_LAB2BGR)
-    colorized = np.clip(colorized, 0, 1)
-
-    # the current colorized image is represented as a floating point
-    # data type in the range [0, 1] -- let's convert to an unsigned 8-bit integer representation in the range [0, 255]
-    colorized = (255 * colorized).astype("uint8")
-    return image, colorized
-
+# load colorizers
+colorizer_eccv16 = eccv16(pretrained=True).eval()
+colorizer_siggraph17 = siggraph17(pretrained=True).eval()
 
 def load_from_st(uploaded_file):
     tfile = tempfile.NamedTemporaryFile(delete=False)
@@ -91,7 +26,6 @@ def load_from_st(uploaded_file):
 
 
 def main():
-    net = load_network()
     st.title("Image Colorizer")
     st.subheader("Created by Just Caleb (Choe)")
     file_name = None
@@ -99,6 +33,8 @@ def main():
     uploaded_file = st.file_uploader("Upload Files", type=["png", "jpg", "jpeg"])
     if uploaded_file:
         file_name = load_from_st(uploaded_file)
+        img = load_img(file_name)
+        (tens_l_orig, tens_l_rs) = preprocess_img(img, HW=(256,256))
 
     st.markdown("<p style='text-align: center;'>OR</p>",
             unsafe_allow_html=True)
@@ -109,18 +45,31 @@ def main():
             response = requests.get(image_url)
             uploaded_file = BytesIO(response.content)
             file_name = load_from_st(uploaded_file)
+            img = load_img(file_name)
+            (tens_l_orig, tens_l_rs) = preprocess_img(img, HW=(256,256))
         except:
             st.write("Please enter a valid URL")
 
+    model = st.radio("Colorize with one of these two models: ",
+                         ('ECCV16', 'SIGGRAPH17'))
+
     if st.button("Colorize!") and file_name is not None:
         with st.spinner("Doing some magic ~~~"):
-            image, colorized = colorize(file_name, net)
-            st.balloons()
-            st.write("Result:")
-            first, second = st.columns(2)
-            first.image(image, channels="BGR")
-            second.image(colorized, channels="BGR")
-
+            try:
+                img_bw = postprocess_tens(tens_l_orig, torch.cat((0*tens_l_orig,0*tens_l_orig),dim=1))
+                if model == "ECCV16":
+                    colorized = postprocess_tens(tens_l_orig, colorizer_eccv16(tens_l_rs).cpu())
+                    st.balloons()
+                else:
+                    colorized = postprocess_tens(tens_l_orig, colorizer_siggraph17(tens_l_rs).cpu())
+                st.write("Result:")
+                first, second = st.columns(2)
+                first.image(img_bw, channels="BGR")
+                second.image(colorized, channels="BGR")
+            except:
+                st.write("Something went wrong. Sending kittens to fix it.")
+    else:
+        st.write("Please either upload an image or enter a URL to an image")
 
 if __name__ == "__main__":
     main()
