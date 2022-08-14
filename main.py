@@ -36,9 +36,6 @@ def main():
         img = load_img(file_name)
         (tens_l_orig, tens_l_rs) = preprocess_img(img, HW=(256,256))
 
-    st.markdown("<p style='text-align: center;'>OR</p>",
-            unsafe_allow_html=True)
-
     model = st.radio("Colorize with one of these two models: ",
                          ('ECCV16', 'SIGGRAPH17'))
 
