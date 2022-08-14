@@ -39,17 +39,6 @@ def main():
     st.markdown("<p style='text-align: center;'>OR</p>",
             unsafe_allow_html=True)
 
-    image_url = st.text_input("URL: ")
-    if file_name is None and image_url:
-        try:
-            response = requests.get(image_url)
-            uploaded_file = BytesIO(response.content)
-            file_name = load_from_st(uploaded_file)
-            img = load_img(file_name)
-            (tens_l_orig, tens_l_rs) = preprocess_img(img, HW=(256,256))
-        except:
-            st.write("Please enter a valid URL")
-
     model = st.radio("Colorize with one of these two models: ",
                          ('ECCV16', 'SIGGRAPH17'))
 
@@ -59,7 +48,6 @@ def main():
                 img_bw = postprocess_tens(tens_l_orig, torch.cat((0*tens_l_orig,0*tens_l_orig),dim=1))
                 if model == "ECCV16":
                     colorized = postprocess_tens(tens_l_orig, colorizer_eccv16(tens_l_rs).cpu())
-                    st.balloons()
                 else:
                     colorized = postprocess_tens(tens_l_orig, colorizer_siggraph17(tens_l_rs).cpu())
                 st.write("Result:")
